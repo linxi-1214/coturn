@@ -1,0 +1,82 @@
+# ============================================================
+# Coturn Docker Compose Demo
+#
+# 一键启动 Coturn TURN/STUN 服务器
+# One-command Coturn TURN/STUN server startup
+#
+# 使用方法 / Usage:
+#   docker compose up
+#
+# 测试连通性 / Test connectivity:
+#   docker compose run --rm coturn-test
+# ============================================================
+
+services:
+
+  # ---------------------------------------------------------
+  # Coturn TURN/STUN 服务器 / TURN/STUN Server
+  # ---------------------------------------------------------
+  coturn:
+    image: coturn/coturn:latest
+    restart: unless-stopped
+
+    # 挂载 Demo 配置文件 / Mount demo config file
+    volumes:
+      - ./turnserver.conf:/etc/coturn/turnserver.conf:ro
+
+    # 端口映射 / Port mapping
+    ports:
+      # TURN/STUN (UDP + TCP)
+      - "3478:3478"
+      - "3478:3478/udp"
+      # 中继端口范围 / Relay port range
+      # 注意：大范围端口映射在 Docker 桥接网络下性能较差，
+      # 生产环境推荐使用 --network=host
+      # Note: large port-range mapping is slow in bridge mode;
+      # use --network=host in production.
+      - "49152-49200:49152-49200/udp"
+
+    # 将 min/max-port 范围缩小以加速 Demo 启动
+    # Override relay port range to speed up demo startup
+    command: >
+      -c /etc/coturn/turnserver.conf
+      --min-port=49152
+      --max-port=49200
+
+    healthcheck:
+      test: ["CMD-SHELL", "turnutils_stunclient 127.0.0.1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  # ---------------------------------------------------------
+  # 连通性测试容器 / Connectivity test container
+  # 运行: docker compose run --rm coturn-test
+  # Run: docker compose run --rm coturn-test
+  # ---------------------------------------------------------
+  coturn-test:
+    image: coturn/coturn:latest
+    profiles: ["test"]
+    depends_on:
+      coturn:
+        condition: service_healthy
+    # 使用内置 turnutils_uclient 测试 TURN 分配
+    # Use the built-in turnutils_uclient to test TURN allocation
+    entrypoint: >
+      sh -c "
+        echo '=== Testing STUN Binding ===' &&
+        turnutils_stunclient coturn &&
+        echo '=== Testing TURN UDP Allocation ===' &&
+        turnutils_uclient
+          -n 5
+          -m 1
+          -l 100
+          -u demo_user
+          -w demo_pass
+          -e coturn
+          -X
+          -g
+          coturn &&
+        echo '=== All tests passed! ==='
+      "
